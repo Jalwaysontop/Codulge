@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Code Preview & Fixer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
+    
+    <style>
+        /* --- GLOBAL & RESET --- */
+        * { box-sizing: border-box; }
+
+        /* --- 1. CUSTOM SCROLLBARS (The Fix) --- */
+        /* Works on Chrome, Edge, Safari */
+        ::-webkit-scrollbar {
+            width: 8px;  /* Thin vertical scrollbar */
+            height: 8px; /* Thin horizontal scrollbar */
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent; /* See-through track */
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background-color: rgba(255, 255, 255, 0.1); /* Very faint grey */
+            border-radius: 4px; /* Rounded pill shape */
+            border: 2px solid transparent; /* Padding around scrollbar */
+            background-clip: content-box;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background-color: rgba(255, 255, 255, 0.3); /* Brighter on hover */
+        }
+
+        ::-webkit-scrollbar-corner {
+            background: transparent;
+        }
+
+        /* Firefox Support */
+        * {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+        }
+
+        /* --- THEME --- */
+        :root {
+            --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            --glass-bg: rgba(20, 20, 25, 0.95);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --primary: #818cf8;
+            --primary-hover: #6366f1;
+            --text-main: #e2e8f0;
+            --text-muted: #94a3b8;
+            
+            /* VS Code Theme Colors */
+            --editor-bg: #1e1e1e;
+            --diff-add-bg: rgba(46, 160, 67, 0.2);
+            --diff-rem-bg: rgba(248, 81, 73, 0.2);
+            --gutter-bg: #252526;
+            --gutter-text: #858585;
+            
+            --font-ui: 'Inter', sans-serif;
+            --font-code: 'JetBrains Mono', monospace;
+        }
+
+        body {
+            margin: 0;
+            font-family: var(--font-ui);
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-bottom: 50px;
+            overflow-x: hidden;
+        }
+
+        .app-container {
+            max-width: 1400px;
+            width: 95%;
+            padding: 2rem 0;
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        .header { text-align: center; margin-bottom: 2.5rem; }
+        .title {
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: linear-gradient(to right, #818cf8, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin: 0;
+            letter-spacing: -1px;
+        }
+        .subtitle { color: var(--text-muted); margin-top: 10px; font-size: 1.1rem; }
+
+        /* --- LAYOUT --- */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        @media (min-width: 900px) { .main-grid { grid-template-columns: 1fr 1fr; } }
+
+        /* --- CARDS --- */
+        .card {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            /* Dynamic Height Sizing */
+            height: 600px; 
+            overflow: hidden; /* Hide outer scrollbars */
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 1rem;
+            color: var(--primary);
+            font-weight: 600;
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            flex-shrink: 0; 
+        }
+
+        /* --- INPUT EDITOR --- */
+        .code-editor {
+            flex: 1;
+            background: var(--editor-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 6px;
+            color: #d4d4d4;
+            font-family: var(--font-code);
+            padding: 1rem;
+            font-size: 14px;
+            resize: none;
+            outline: none;
+            line-height: 1.5;
+            transition: border-color 0.2s;
+            /* Scroll Handling */
+            white-space: pre;
+            overflow: auto; 
+            width: 100%;
+        }
+        .code-editor:focus { border-color: var(--primary); }
+
+        .analyze-btn {
+            margin-top: 1.5rem;
+            background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 1rem;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: transform 0.2s;
+            width: 100%;
+            flex-shrink: 0;
+        }
+        .analyze-btn:hover:not(:disabled) { transform: translateY(-2px); }
+        .analyze-btn:disabled { opacity: 0.7; cursor: wait; }
+
+        /* --- OUTPUT MARKDOWN --- */
+        .markdown-output {
+            flex: 1;
+            background: rgba(0,0,0,0.2);
+            border-radius: 6px;
+            padding: 1rem;
+            overflow: auto; /* Uses custom scrollbar */
+            font-size: 15px;
+            line-height: 1.6;
+            color: #d4d4d4;
+            border: 1px solid var(--glass-border);
+        }
+        .markdown-output h1, .markdown-output h2 { color: #fff; border-bottom: 1px solid var(--glass-border); padding-bottom: 0.5rem; margin-top: 1.5rem; }
+        .markdown-output strong { color: #4ade80; }
+        .markdown-output code { font-family: var(--font-code); background: rgba(255,255,255,0.1); padding: 2px 5px; border-radius: 4px; color: #ffadad; }
+        .markdown-output pre { 
+            background: #0d1117; 
+            padding: 1rem; 
+            border-radius: 6px; 
+            overflow-x: auto; 
+            border: 1px solid var(--glass-border);
+        }
+
+        /* --- COMPARISON SECTION --- */
+        .diff-card {
+            width: 100%;
+            display: none;
+            flex-direction: column;
+            height: auto;
+            max-width: 100%;
+        }
+
+        .diff-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            background: var(--editor-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            font-family: var(--font-code);
+            font-size: 13px;
+            overflow: hidden;
+            /* Container Scroll */
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .diff-pane {
+            /* Use custom scrollbar for horizontal code scrolling */
+            overflow-x: auto; 
+            min-width: 0;
+        }
+        .diff-pane:first-child { border-right: 1px solid #333; }
+
+        .diff-header {
+            position: sticky;
+            top: 0;
+            background: #252526;
+            padding: 8px 15px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+            border-bottom: 1px solid #333;
+            z-index: 10;
+        }
+        .diff-header.original { color: #f87171; border-left: 3px solid #f87171; }
+        .diff-header.fixed { color: #4ade80; border-left: 3px solid #4ade80; }
+
+        .code-line {
+            display: flex;
+            line-height: 1.5;
+            min-height: 20px;
+        }
+        .code-line:hover { background-color: rgba(255,255,255,0.05); }
+
+        .line-number {
+            width: 40px;
+            text-align: right;
+            padding-right: 12px;
+            color: var(--gutter-text);
+            background: var(--gutter-bg);
+            user-select: none;
+            flex-shrink: 0;
+            border-right: 1px solid #333;
+        }
+
+        .line-content {
+            padding-left: 10px;
+            white-space: pre; 
+            color: #d4d4d4;
+            flex: 1;
+        }
+
+        .diff-removed { background-color: var(--diff-rem-bg); }
+        .diff-removed .line-number { opacity: 0.7; }
+        .diff-added { background-color: var(--diff-add-bg); }
+        .diff-added .line-number { color: #cce7cf; }
+
+        .loader { display: none; width: 20px; height: 20px; border: 3px solid rgba(255, 255, 255, 0.3); border-radius: 50%; border-top-color: #fff; animation: spin 1s infinite linear; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+
+    <div class="app-container">
+        <header class="header">
+            <h1 class="title">Codulge</h1>
+            <p class="subtitle">Gemini Powered • VS Code Style Diff</p>
+        </header>
+
+        <div class="main-grid">
+            <div class="card">
+                <div class="card-header"><span>📝 Input Code</span></div>
+                <textarea id="codeInput" class="code-editor" placeholder="// Paste your code here..." spellcheck="false"></textarea>
+                
+                <button id="btn" onclick="analyzeCode()" class="analyze-btn">
+                    <span id="btnText">✨ Analyze Code</span>
+                    <div id="loader" class="loader"></div>
+                </button>
+            </div>
+
+            <div class="card">
+                <div class="card-header"><span>🤖 AI Analysis</span></div>
+                <div id="output" class="markdown-output">Results will appear here...</div>
+            </div>
+        </div>
+
+        <div id="diffCard" class="card diff-card">
+            <div class="card-header"><span>⚖️ Code Comparison (Original vs. Fixed)</span></div>
+            <div class="diff-container">
+                <div class="diff-pane">
+                    <div class="diff-header original">Original</div>
+                    <div id="originalOutput"></div>
+                </div>
+                <div class="diff-pane">
+                    <div class="diff-header fixed">Suggested Fix</div>
+                    <div id="fixedOutput"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function analyzeCode() {
+            const codeInput = document.getElementById('codeInput');
+            const btn = document.getElementById('btn');
+            const btnText = document.getElementById('btnText');
+            const loader = document.getElementById('loader');
+            const output = document.getElementById('output');
+            const diffCard = document.getElementById('diffCard');
+            const code = codeInput.value;
+
+            if (!code.trim()) { alert("Please enter some code first."); return; }
+
+            btn.disabled = true;
+            btnText.style.display = 'none';
+            loader.style.display = 'block';
+            output.innerHTML = '<p style="color: #94a3b8; font-style: italic; text-align: center; margin-top: 25%;">Analyzing logic and fixing bugs...</p>';
+            diffCard.style.display = 'none';
+
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code: code })
+                });
+
+                if(!response.ok) throw new Error("Backend Error " + response.status);
+
+                const data = await response.json();
+
+                const explanation = data.explanation || data.result;
+                if (explanation) {
+                    output.innerHTML = marked.parse(explanation);
+                    
+                    // Video Embed Logic
+                    const links = output.getElementsByTagName('a');
+                    Array.from(links).forEach(link => {
+                        const url = link.href;
+                        const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]{11})/);
+                        if (match && match[1]) {
+                            const videoId = match[1];
+                            const videoDiv = document.createElement('div');
+                            videoDiv.style.cssText = "position: relative; width: 100%; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 8px; margin: 15px 0; border: 1px solid rgba(255,255,255,0.1); background: #000;";
+                            videoDiv.innerHTML = `<iframe src="https://www.youtube.com/embed/${videoId}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;" frameborder="0" allowfullscreen></iframe>`;
+                            if (link.parentNode) link.parentNode.insertBefore(videoDiv, link.nextSibling);
+                        }
+                    });
+
+                } else {
+                    output.innerHTML = '<p style="color: #f87171">No explanation returned.</p>';
+                }
+
+                const fixedCode = data.fixedCode || "";
+                
+                if (fixedCode && fixedCode !== code) {
+                    renderDiff(code, fixedCode);
+                    diffCard.style.display = 'flex';
+                    diffCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } else {
+                    diffCard.style.display = 'none';
+                }
+
+            } catch (error) {
+                console.error(error);
+                output.innerHTML = `<p style="color: #f87171"><strong>Error:</strong> ${error.message}</p>`;
+            } finally {
+                btn.disabled = false;
+                btnText.style.display = 'block';
+                loader.style.display = 'none';
+            }
+        }
+
+        function renderDiff(original, fixed) {
+            const diff = Diff.diffLines(original, fixed);
+            let leftHTML = "", rightHTML = "";
+            let leftCount = 1, rightCount = 1;
+
+            diff.forEach(part => {
+                const lines = part.value.split('\n');
+                if (lines[lines.length - 1] === '') lines.pop(); 
+
+                lines.forEach(line => {
+                    if (part.removed) {
+                        leftHTML += createLine(leftCount++, line, 'diff-removed');
+                        rightHTML += createLine('', '', 'empty-line');
+                    } else if (part.added) {
+                        leftHTML += createLine('', '', 'empty-line');
+                        rightHTML += createLine(rightCount++, line, 'diff-added');
+                    } else {
+                        leftHTML += createLine(leftCount++, line, '');
+                        rightHTML += createLine(rightCount++, line, '');
+                    }
+                });
+            });
+
+            document.getElementById('originalOutput').innerHTML = leftHTML;
+            document.getElementById('fixedOutput').innerHTML = rightHTML;
+        }
+
+        function createLine(num, content, className) {
+            if (className === 'empty-line') {
+                return `<div class="code-line"><div class="line-number"></div><div class="line-content"></div></div>`;
+            }
+            const safe = content.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            return `<div class="code-line ${className}">
+                        <div class="line-number">${num}</div>
+                        <div class="line-content">${safe || ' '}</div>
+                    </div>`;
+        }
+    </script>
+</body>
+</html>
